@@ -1,0 +1,10 @@
+ngx_addon_name=ngx_http_php_module
+HTTP_MODULES="$HTTP_MODULES ngx_http_php_module"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_php_module.c"
+
+NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_http_php_module.h \
+                                $ngx_addon_dir/defined.h"
+
+CORE_INCS="$CORE_INCS $PHP_INC $PHP_INC/main $PHP_INC/TSRM $PHP_INC/Zend $PHP_INC/sapi/embed"
+
+CORE_LIBS="$CORE_LIBS -lstdc++ -L$PHP_LIB -lphp7"
