@@ -6,42 +6,85 @@ static ngx_command_t ngx_http_php_commands[] = {
         {
                 ngx_string("load_php"),
                 NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS | NGX_CONF_TAKE1,
-                ngx_conf_set_str_slot,
+                ngx_http_php_handle_conf,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_php_loc_conf_t, filename),
-                NULL},
-
+                NULL
+        },
         ngx_null_command
 };
 
 static ngx_http_module_t ngx_http_php_module_ctx = {
-        NULL,   //preconfiguration
-        ngx_http_php_init,    //postconfiguration
-        NULL,   //create main configuration
-        NULL,     //init main configuration
-        NULL,    //create server configuration
-        NULL,    //merge server configuration
-        ngx_http_php_create_loc_conf, //create location configuration
-        NULL             //merge location configuration
+        NULL,                           //pre_configuration
+        ngx_http_php_init,              //post_configuration
+        NULL,                           //create main configuration
+        NULL,                           //init main configuration
+        NULL,                           //create server configuration
+        NULL,                           //merge server configuration
+        ngx_http_php_create_loc_conf,   //create location configuration
+        NULL                            //merge location configuration
 };
 
 ngx_module_t ngx_http_php_module = {
         NGX_MODULE_V1,
-        &ngx_http_php_module_ctx,    /* module context */
-        ngx_http_php_commands,       /* module directives */
-        NGX_HTTP_MODULE,               /* module type */
-        NULL,                          /* init master */
-        NULL,                          /* init module */
-        NULL,                          /* init process */
-        NULL,                          /* init thread */
-        NULL,                          /* exit thread */
-        NULL,                          /* exit process */
-        NULL,                          /* exit master */
+        &ngx_http_php_module_ctx,   /* module context */
+        ngx_http_php_commands,      /* module directives */
+        NGX_HTTP_MODULE,            /* module type */
+        NULL,                       /* init master */
+        NULL,                       /* init module */
+        NULL,                       /* init process */
+        NULL,                       /* init thread */
+        NULL,                       /* exit thread */
+        NULL,                       /* exit process */
+        NULL,                       /* exit master */
         NGX_MODULE_V1_PADDING
 };
 
-static ngx_int_t
-ngx_http_php_handler(ngx_http_request_t *r) {
+static ngx_conf_post_t ngx_http_php_post = {
+        ngx_http_php_handle_post
+};
+
+char * ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+    printf("--------- HANDLE_CONF ---------\n");
+    cmd->post = &ngx_http_php_post;
+    return ngx_conf_set_str_slot(cf, cmd, conf);
+}
+
+char * ngx_http_php_handle_post(ngx_conf_t *cf, void *data, void *field) {
+    char * filename;
+    ngx_str_t * str = field;
+    ngx_http_php_conf_ctx_t *ctx;
+
+    ctx = ngx_pcalloc(cf->pool, sizeof(*ctx));
+    if (ctx == NULL) {
+        return NGX_CONF_ERROR;
+    }
+    cf->ctx = ctx;
+
+    filename = ngx_pcalloc(cf->pool, 1);
+    ngx_cpystrn((u_char *) filename, str->data, str->len + 1);
+
+    printf("--------- FILENAME: %s ---------\n", filename);
+
+    return NGX_CONF_OK;
+}
+
+static void *ngx_http_php_create_loc_conf(ngx_conf_t *cf) {
+    printf("--------- CRATE_LOC_CONF ---------\n");
+
+    ngx_http_php_loc_conf_t *local_conf = NULL;
+    local_conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_php_loc_conf_t));
+    if (local_conf == NULL) {
+        return NULL;
+    }
+
+    ngx_str_null(&local_conf->filename);
+    ngx_php_request = NULL;
+
+    return local_conf;
+}
+
+static ngx_int_t ngx_http_php_handler(ngx_http_request_t *r) {
     ngx_int_t rc;
     ngx_http_php_loc_conf_t *my_conf;
     char *filename;
@@ -60,7 +103,11 @@ ngx_http_php_handler(ngx_http_request_t *r) {
     filename = ngx_pcalloc(r->pool, 1);
     ngx_cpystrn((u_char *) filename, my_conf->filename.data, my_conf->filename.len + 1);
 
-    printf("---filename--- %s \n", filename);
+    if (strlen(filename) == 0) {
+        ngx_http_send_header(r);
+        ngx_http_output_filter(r, ctx->out_head);
+        return NGX_OK;
+    }
 
     nginx_http_run_php_file(filename);
 
@@ -81,8 +128,27 @@ ngx_http_php_handler(ngx_http_request_t *r) {
     }
 
     ngx_http_output_filter(r, ctx->out_head);
-
     ngx_http_set_ctx(r, NULL, ngx_http_php_module);
+
+    return NGX_OK;
+}
+
+static ngx_int_t ngx_http_php_init(ngx_conf_t *cf) {
+    ngx_http_handler_pt *h;
+    ngx_http_core_main_conf_t *cmcf;
+
+    printf("--------- INIT ---------\n");
+
+    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    php_embed_module.ub_write = *ngx_http_php_ub_write;
+    php_embed_init(0, NULL);
+
+    *h = ngx_http_php_handler;
 
     return NGX_OK;
 }
@@ -97,11 +163,12 @@ static int nginx_http_run_php_file(char *filename) {
         fprintf(stderr, "Unable to open: %s\n", script.filename);
         return -1;
     }
-    php_embed_module.ub_write = *ngx_http_php_ub_write;
-    PHP_EMBED_START_BLOCK(0, NULL)
-    php_execute_script(&script
-    TSRMLS_CC);
-    PHP_EMBED_END_BLOCK()
+    zend_op_array *op_array;
+    op_array = zend_compile_file(&script, ZEND_REQUIRE);
+    zend_first_try{
+        zend_execute(op_array, NULL);
+    }zend_catch{}
+    zend_end_try();
     return 0;
 }
 
@@ -136,38 +203,8 @@ static size_t ngx_http_php_ub_write(const char *str, size_t str_length TSRMLS_DC
     return r->headers_out.content_length_n;
 }
 
-static void *ngx_http_php_create_loc_conf(ngx_conf_t *cf) {
-    ngx_http_php_loc_conf_t *local_conf = NULL;
-    local_conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_php_loc_conf_t));
-    if (local_conf == NULL) {
-        return NULL;
-    }
-
-    ngx_str_null(&local_conf->filename);
-    ngx_php_request = NULL;
-
-    return local_conf;
-}
-
-static ngx_int_t
-ngx_http_php_init(ngx_conf_t *cf) {
-    ngx_http_handler_pt *h;
-    ngx_http_core_main_conf_t *cmcf;
-
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_php_handler;
-
-    return NGX_OK;
-}
-
 /**
- *
+ * build a buffer pointer as ngx_buf_t
  * @param pool
  * @param str
  * @return

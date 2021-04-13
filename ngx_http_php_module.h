@@ -5,6 +5,10 @@
 
 #include "defined.h"
 
+char * ngx_http_php_handle_post(ngx_conf_t *cf, void *data, void *filed);
+
+char * ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+
 static ngx_int_t ngx_http_php_init(ngx_conf_t *cf);
 
 static void *ngx_http_php_create_loc_conf(ngx_conf_t *cf);
