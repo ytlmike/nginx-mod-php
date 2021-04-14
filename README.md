@@ -22,3 +22,15 @@ linux only yet.
                 --prefix=/usr/local/nginx_php \
                 --add-module=/path_to_nginx_mod_php
     ```
+
+## Config
+
+```
+location /demo {
+    load_php path_to_your_php_file;
+}
+```
+
+## Opcache
+the opcache extension is not support embed sapi by default, to enable it, you should change your php source code and rebuild php.
+the code is in `php-src/ext/opcache/ZendAccelerator.c`, find `accel_find_sapi` function and add "embed" to `upported_sapis[]`

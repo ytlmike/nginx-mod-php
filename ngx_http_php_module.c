@@ -1,13 +1,12 @@
 #include "ngx_http_php_module.h"
 
 ngx_http_request_t *ngx_php_request;
-zend_op_array *op_array;
 
 static ngx_command_t ngx_http_php_commands[] = {
         {
                 ngx_string("load_php"),
                 NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS | NGX_CONF_TAKE1,
-                ngx_conf_set_str_slot,
+                ngx_http_php_handle_conf,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_php_loc_conf_t, filename),
                 NULL
@@ -17,7 +16,7 @@ static ngx_command_t ngx_http_php_commands[] = {
 
 static ngx_http_module_t ngx_http_php_module_ctx = {
         NULL,                           //pre_configuration
-        ngx_http_php_init,              //post_configuration
+        NULL,                          //post_configuration
         NULL,                           //create main configuration
         NULL,                           //init main configuration
         NULL,                           //create server configuration
@@ -74,8 +73,6 @@ static ngx_int_t ngx_http_php_handler(ngx_http_request_t *r) {
     ngx_cpystrn((u_char *) filename, my_conf->filename.data, my_conf->filename.len + 1);
 
     if (strlen(filename) == 0) {
-        ngx_http_send_header(r);
-        ngx_http_output_filter(r, ctx->out_head);
         return NGX_OK;
     }
 
@@ -103,32 +100,25 @@ static ngx_int_t ngx_http_php_handler(ngx_http_request_t *r) {
     return NGX_OK;
 }
 
-static ngx_int_t ngx_http_php_init(ngx_conf_t *cf) {
-    ngx_http_handler_pt *h;
-    ngx_http_core_main_conf_t *cmcf;
+static char * ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+    printf("--------- READ_CONF ---------\n");
 
-    printf("--------- INIT ---------\n");
-
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
+    php_embed_module.ub_write = *ngx_http_php_ub_write;
+    if (ngx_php_init(0, NULL) == FAILURE) {
+        return NGX_CONF_ERROR;
     }
 
-//    php_embed_module.ub_write = *ngx_http_php_ub_write;
-//    php_embed_init(0, NULL);
-    op_array = NULL;
+    ngx_http_core_loc_conf_t *clcf;
+    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    clcf->handler = ngx_http_php_handler;
 
-    *h = ngx_http_php_handler;
-
-    return NGX_OK;
+    return ngx_conf_set_str_slot(cf, cmd, conf);
 }
 
 static int nginx_http_run_php_file(char *filename) {
-    printf("--------- FILENAME: %s ---------\n", filename);
-    php_embed_module.ub_write = *ngx_http_php_ub_write; //TODO
-    php_embed_init(0, NULL); //TODO
-//    if (op_array == NULL) {
+    if (php_request_startup() == FAILURE) {
+        return FAILURE;
+    }
     zend_file_handle script;
     script.type = ZEND_HANDLE_FP;
     script.filename = filename;
@@ -138,14 +128,16 @@ static int nginx_http_run_php_file(char *filename) {
         fprintf(stderr, "Unable to open: %s\n", script.filename);
         return -1;
     }
-    op_array = zend_compile_file(&script, ZEND_REQUIRE);
-//    }
 
-    zend_first_try{
-        zend_execute(op_array, NULL);
-    }zend_catch{}
+    zend_first_try
+    {
+        php_execute_script(&script);
+    }
+    zend_catch
+    {}
     zend_end_try();
-    php_embed_shutdown(); //TODO
+    php_request_shutdown((void *) 0);
+
     return 0;
 }
 
@@ -180,6 +172,40 @@ static size_t ngx_http_php_ub_write(const char *str, size_t str_length TSRMLS_DC
     return r->headers_out.content_length_n;
 }
 
+int ngx_php_init(int argc, char **argv) {
+    zend_llist global_vars;
+
+#if defined(SIGPIPE) && defined(SIG_IGN)
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
+#ifdef ZTS
+    php_tsrm_startup();
+# ifdef PHP_WIN32
+  ZEND_TSRMLS_CACHE_UPDATE();
+# endif
+#endif
+
+    zend_signal_startup();
+
+    sapi_startup(&php_embed_module);
+
+    if (php_embed_module.startup(&php_embed_module) == FAILURE) {
+        return FAILURE;
+    }
+
+    zend_llist_init(&global_vars, sizeof(char *), NULL, 0);
+
+    /* Set some Embedded PHP defaults */
+    SG(options) |= SAPI_OPTION_NO_CHDIR;
+
+    SG(headers_sent) = 1;
+    SG(request_info).no_headers = 1;
+    php_register_variable("PHP_SELF", "-", NULL);
+
+    return SUCCESS;
+}
+
 /**
  * build a buffer pointer as ngx_buf_t
  * @param pool
@@ -204,3 +230,18 @@ static ngx_buf_t *ngx_http_php_build_buffer(ngx_pool_t *pool, const char *str, u
 
     return b;
 }
+
+//static ngx_int_t ngx_http_php_init(ngx_conf_t *cf) {
+//    printf("--------- INIT ---------\n");
+//    ngx_http_handler_pt *h;
+//    ngx_http_core_main_conf_t *cmcf;
+//
+//    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+//    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
+//    if (h == NULL) {
+//        return NGX_ERROR;
+//    }
+//
+//    *h = ngx_http_php_handler;
+//    return NGX_OK;
+//}
