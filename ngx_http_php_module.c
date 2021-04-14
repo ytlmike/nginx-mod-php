@@ -1,12 +1,13 @@
 #include "ngx_http_php_module.h"
 
 ngx_http_request_t *ngx_php_request;
+zend_op_array *op_array;
 
 static ngx_command_t ngx_http_php_commands[] = {
         {
                 ngx_string("load_php"),
                 NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS | NGX_CONF_TAKE1,
-                ngx_http_php_handle_conf,
+                ngx_conf_set_str_slot,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_php_loc_conf_t, filename),
                 NULL
@@ -40,38 +41,7 @@ ngx_module_t ngx_http_php_module = {
         NGX_MODULE_V1_PADDING
 };
 
-static ngx_conf_post_t ngx_http_php_post = {
-        ngx_http_php_handle_post
-};
-
-char * ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
-    printf("--------- HANDLE_CONF ---------\n");
-    cmd->post = &ngx_http_php_post;
-    return ngx_conf_set_str_slot(cf, cmd, conf);
-}
-
-char * ngx_http_php_handle_post(ngx_conf_t *cf, void *data, void *field) {
-    char * filename;
-    ngx_str_t * str = field;
-    ngx_http_php_conf_ctx_t *ctx;
-
-    ctx = ngx_pcalloc(cf->pool, sizeof(*ctx));
-    if (ctx == NULL) {
-        return NGX_CONF_ERROR;
-    }
-    cf->ctx = ctx;
-
-    filename = ngx_pcalloc(cf->pool, 1);
-    ngx_cpystrn((u_char *) filename, str->data, str->len + 1);
-
-    printf("--------- FILENAME: %s ---------\n", filename);
-
-    return NGX_CONF_OK;
-}
-
 static void *ngx_http_php_create_loc_conf(ngx_conf_t *cf) {
-    printf("--------- CRATE_LOC_CONF ---------\n");
-
     ngx_http_php_loc_conf_t *local_conf = NULL;
     local_conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_php_loc_conf_t));
     if (local_conf == NULL) {
@@ -145,8 +115,9 @@ static ngx_int_t ngx_http_php_init(ngx_conf_t *cf) {
         return NGX_ERROR;
     }
 
-    php_embed_module.ub_write = *ngx_http_php_ub_write;
-    php_embed_init(0, NULL);
+//    php_embed_module.ub_write = *ngx_http_php_ub_write;
+//    php_embed_init(0, NULL);
+    op_array = NULL;
 
     *h = ngx_http_php_handler;
 
@@ -154,6 +125,10 @@ static ngx_int_t ngx_http_php_init(ngx_conf_t *cf) {
 }
 
 static int nginx_http_run_php_file(char *filename) {
+    printf("--------- FILENAME: %s ---------\n", filename);
+    php_embed_module.ub_write = *ngx_http_php_ub_write; //TODO
+    php_embed_init(0, NULL); //TODO
+//    if (op_array == NULL) {
     zend_file_handle script;
     script.type = ZEND_HANDLE_FP;
     script.filename = filename;
@@ -163,12 +138,14 @@ static int nginx_http_run_php_file(char *filename) {
         fprintf(stderr, "Unable to open: %s\n", script.filename);
         return -1;
     }
-    zend_op_array *op_array;
     op_array = zend_compile_file(&script, ZEND_REQUIRE);
+//    }
+
     zend_first_try{
         zend_execute(op_array, NULL);
     }zend_catch{}
     zend_end_try();
+    php_embed_shutdown(); //TODO
     return 0;
 }
 
