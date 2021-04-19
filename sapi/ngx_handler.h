@@ -13,4 +13,4 @@ int php_nginx_handler_startup(int argc, char **argv);
 
 int php_nginx_execute_script(const char *filename);
 
-ngx_buf_t *ngx_http_php_build_buffer(ngx_pool_t *pool, const char *str, unsigned int len);
+ngx_buf_t *php_nginx__build_buffer(ngx_pool_t *pool, const char *str, unsigned int len);

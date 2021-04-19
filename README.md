@@ -33,4 +33,4 @@ location /demo {
 
 ## Opcache
 the opcache extension is not support embed sapi by default, to enable it, you should change your php source code and rebuild php.
-the code is in `php-src/ext/opcache/ZendAccelerator.c`, find `accel_find_sapi` function and add "embed" to `upported_sapis[]`
+the code is in `php-src/ext/opcache/ZendAccelerator.c`, find `accel_find_sapi` function and add `nginx_handler` to `supported_sapis[]`

@@ -32,7 +32,7 @@ static ngx_int_t ngx_http_php_handler(ngx_http_request_t *r) {
     }
     ngx_http_set_ctx(r, ctx, ngx_http_php_module);
 
-    filename = ngx_pcalloc(r->pool, 1);
+    filename = ngx_pcalloc(r->pool, my_conf->filename.len + 1);
     ngx_cpystrn((u_char *) filename, my_conf->filename.data, my_conf->filename.len + 1);
 
     if (strlen(filename) == 0) {
