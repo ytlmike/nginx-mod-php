@@ -6,11 +6,17 @@
 #include <zend_ini.h>
 
 #include <ngx_http.h>
+#include "../ngx_http_php_module.h"
 
 extern sapi_module_struct nginx_sapi_module;
 
+typedef struct nginx_php_ctx_s {
+    ngx_http_request_t *r;
+    nginx_php_file_info *script;
+} nginx_php_ctx_t;
+
 int php_nginx_handler_startup(int argc, char **argv);
 
-int php_nginx_execute_script(const char *filename);
+int php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file);
 
-ngx_buf_t *php_nginx__build_buffer(ngx_pool_t *pool, const char *str, unsigned int len);
+ngx_buf_t *php_nginx_build_buffer(ngx_pool_t *pool, const char *str, unsigned int len);
