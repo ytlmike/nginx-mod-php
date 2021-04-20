@@ -19,9 +19,7 @@ ngx_http_php_create_loc_conf(ngx_conf_t *cf) {
 }
 
 static void
-ngx_http_php_read_request_body_callback(ngx_http_request_t *r) {
-    printf("-------- BODY: 0x%p --------\n", r->request_body);
-}
+ngx_http_php_read_request_body_callback(ngx_http_request_t *r) {}
 
 static ngx_int_t
 ngx_http_php_handler(ngx_http_request_t *r) {

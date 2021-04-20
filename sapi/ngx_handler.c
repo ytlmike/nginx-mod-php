@@ -23,7 +23,6 @@ php_nginx_sapi_deactivate(void) {
 
 static size_t
 php_nginx_sapi_ub_write(const char *str, size_t str_length) {
-
     printf("------------- SAPI_UB_WRITE ---------------\n");
 
     ngx_http_php_ctx_t *ctx;
@@ -59,7 +58,6 @@ php_nginx_sapi_ub_write(const char *str, size_t str_length) {
 
 static void
 php_nginx_sapi_flush(void *server_context) {
-
     printf("------------- SAPI_FLUSH ---------------\n");
 
     if (fflush(stdout) == EOF) {
@@ -92,33 +90,31 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
     return SAPI_HEADER_SENT_SUCCESSFULLY;
 }
 
-static size_t php_nginx_sapi_read_post(char *buffer, size_t count_bytes) /* {{{ */
-{
+static size_t
+php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
     printf("------------- SAPI_READ_POST ---------------\n");
 
-    //TODO
-//    nginx_php_ctx_t *php_ctx;
-//    ngx_chain_t *head;
-//    ngx_str_t *str;
-//
-//    php_ctx = SG(server_context);
-//    str = ngx_pcalloc(php_ctx->r->pool, sizeof(ngx_str_t));
-//    if (php_ctx->r->request_body == NULL || php_ctx->r->request_body->bufs == NULL) {
-//        return 0;
-//    }
-//    head = php_ctx->r->request_body->bufs;
-//    while(head->next != NULL) {
-//        str->data = head->buf->pos;
-//        str->len = head->buf->last - head->buf->pos;
-//        printf_ngx_str("------- BODY_PART: %s ------", str);
-//    }
+    nginx_php_ctx_t *php_ctx;
+    ngx_chain_t *head;
+    size_t read_len = 0;
 
-    return 0;
+    php_ctx = SG(server_context);
+    if (php_ctx->r->request_body == NULL || php_ctx->r->request_body->bufs == NULL) {
+        return 0;
+    }
+
+    head = php_ctx->r->request_body->bufs;
+    while(head != NULL) {
+        memcpy(buffer + read_len, head->buf->pos, head->buf->last - head->buf->pos);
+        read_len += head->buf->last - head->buf->pos;
+        head = head->next;
+    }
+
+    return read_len;
 }
 
 static char *
 php_nginx_sapi_read_cookies(void) {
-
     printf("------------- SAPI_READ_COOKIE ---------------\n");
 
     nginx_php_ctx_t *ctx;
@@ -147,17 +143,6 @@ php_nginx_sapi_read_cookies(void) {
         }
     }
     return NULL;
-}
-
-void
-nginx_php_set_header_variable_name(ngx_table_elt_t elt, const char *name, const char *dest, void *default_val, zval *track_vars_array) {
-    if (ngx_strncasecmp(elt.lowcase_key, (u_char *) name, elt.key.len) == 0) {
-        php_register_variable_safe((char *)dest, (char *) elt.value.data, elt.value.len, track_vars_array);
-    } else {
-        if (default_val != NULL) {
-            php_register_variable_safe((char *)dest, (char *)default_val, 0, track_vars_array);
-        }
-    }
 }
 
 char *
@@ -267,15 +252,18 @@ php_nginx_sapi_register_variables(zval *track_vars_array) {
             header = part->elts;
             i = 0;
         }
-        nginx_php_set_header_variable_name(header[i], "content-type", "CONTENT_TYPE", "", track_vars_array);
-        nginx_php_set_header_variable_name(header[i], "content-length", "CONTENT_LENGTH", "", track_vars_array);
+        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-type", header[i].key.len) == 0) {
+            php_register_variable_safe((char *)"CONTENT_TYPE", (char *) header[i].value.data, header[i].value.len, track_vars_array);
+        }
+        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-length", header[i].key.len) == 0) {
+            php_register_variable_safe((char *)"CONTENT_LENGTH", (char *) header[i].value.data, header[i].value.len, track_vars_array);
+        }
         php_register_variable_safe(nginx_header_name_to_php_server_key(r->pool, &header[i]), (char *) header[i].value.data, header[i].value.len, track_vars_array);
     }
 }
 
 static void
 php_nginx_sapi_log_message(char *msg, int syslog_type_int) {
-
     printf("------------- SAPI_LOG_MSG ---------------\n");
 
     fprintf(stderr, "%s\n", msg);
@@ -283,7 +271,6 @@ php_nginx_sapi_log_message(char *msg, int syslog_type_int) {
 }
 
 static double php_nginx_sapi_get_request_time(void) {
-
     printf("------------- SAPI_GET_REQ_TIME ---------------\n");
 
     return (double) 0;
@@ -323,7 +310,6 @@ sapi_module_struct nginx_sapi_module = {
 
 int
 php_nginx_handler_startup(int argc, char **argv) {
-
     printf("------------- SAPI_HANDLER_START_UP---------------\n");
 
 #ifdef ZTS
@@ -344,7 +330,6 @@ php_nginx_handler_startup(int argc, char **argv) {
 
 int
 php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
-
     printf("------------- SAPI_EXEC_SCRIPT ---------------\n");
 
     if (php_request_startup() == FAILURE) {
