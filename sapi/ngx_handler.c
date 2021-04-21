@@ -27,10 +27,8 @@ php_nginx_sapi_ub_write(const char *str, size_t str_length) {
 
     ngx_http_php_ctx_t *ctx;
     ngx_http_request_t *r;
-    nginx_php_ctx_t *php_ctx;
 
-    php_ctx = SG(server_context);
-    r = php_ctx->r;
+    r = ngx_php_request;
     ctx = ngx_http_get_module_ctx(r, ngx_http_php_module);
 
     if (ctx->out_head == NULL) {
@@ -109,7 +107,7 @@ php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
         read_len += head->buf->last - head->buf->pos;
         head = head->next;
     }
-
+    printf("------------- SAPI_POST: %s ---------------\n", buffer);
     return read_len;
 }
 
@@ -270,12 +268,6 @@ php_nginx_sapi_log_message(char *msg, int syslog_type_int) {
     //TODO
 }
 
-static double php_nginx_sapi_get_request_time(void) {
-    printf("------------- SAPI_GET_REQ_TIME ---------------\n");
-
-    return (double) 0;
-}
-
 sapi_module_struct nginx_sapi_module = {
         "nginx_handler",                /* name */
         "PHP Nginx Handler",            /* pretty name */
@@ -302,7 +294,7 @@ sapi_module_struct nginx_sapi_module = {
 
         php_nginx_sapi_register_variables,  /* register server variables */
         php_nginx_sapi_log_message,         /* Log message */
-        php_nginx_sapi_get_request_time,    /* Get request time */
+        NULL,    /* Get request time */
         NULL,                                /* Child terminate */
 
         STANDARD_SAPI_MODULE_PROPERTIES
@@ -345,6 +337,14 @@ php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
         ctx->script = php_file;
         SG(server_context) = ctx;
     }
+    SG(request_info).path_translated = NULL;
+    SG(request_info).request_method = NULL;
+    SG(request_info).proto_num = 1000;
+    SG(request_info).query_string = NULL;
+    SG(request_info).request_uri = NULL;
+    SG(request_info).content_type = NULL;
+    SG(request_info).content_length = 0;
+    SG(sapi_headers).http_response_code = 200;
 
     script.type = ZEND_HANDLE_FP;
     script.filename = nginx_str_to_char(r->pool, &php_file->full);
@@ -363,6 +363,7 @@ php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
             {}
     zend_end_try();
 
+    SG(server_context) = NULL;
     php_request_shutdown((void *) 0);
 
     return 0;

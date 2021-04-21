@@ -4,6 +4,7 @@
 #include <php_embed.h>
 #include "sapi/helper.h"
 
+extern ngx_http_request_t *ngx_php_request;
 extern ngx_module_t ngx_http_php_module;
 
 #ifndef NGX_PHP_MODULE_DEF
