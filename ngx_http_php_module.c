@@ -20,6 +20,7 @@ ngx_http_php_create_loc_conf(ngx_conf_t *cf) {
 
 static void
 ngx_http_php_read_request_body_callback(ngx_http_request_t *r) {
+    printf("------------- CALLBACK_BODY -------------\n");
     ngx_http_finalize_request(r, NGX_HTTP_OK);
 }
 
@@ -32,7 +33,7 @@ ngx_http_php_handler(ngx_http_request_t *r) {
 
     // read body
     if ((r->method == NGX_HTTP_POST || r->method == NGX_HTTP_PUT || r->method == NGX_HTTP_DELETE || r->method == NGX_HTTP_PATCH)) {
-//        r->request_body_in_single_buf = 1;
+        r->request_body_in_single_buf = 1;
         rc = ngx_http_read_client_request_body(r, ngx_http_php_read_request_body_callback);
         if (rc == NGX_AGAIN) {
             //TODO

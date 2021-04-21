@@ -39,8 +39,7 @@ php_nginx_sapi_ub_write(const char *str, size_t str_length) {
         ctx->out_tail = &(*ctx->out_tail)->next;
     }
 
-    (*ctx->out_tail)->buf = php_nginx_build_buffer(r->pool, (const char *) str,
-                                                   (unsigned int) str_length);
+    (*ctx->out_tail)->buf = php_nginx_build_buffer(r->pool, (const char *) str, (unsigned int) str_length);
     (*ctx->out_tail)->next = NULL;
 
     ngx_http_set_ctx(r, ctx, ngx_http_php_module);
@@ -58,27 +57,41 @@ static void
 php_nginx_sapi_flush(void *server_context) {
     printf("------------- SAPI_FLUSH ---------------\n");
 
+    nginx_php_ctx_t *ctx = server_context;
+    sapi_send_headers();
+
+    ctx->r->headers_out.status = SG(sapi_headers).http_response_code;
+    SG(headers_sent) = 1;
+
     if (fflush(stdout) == EOF) {
         php_handle_aborted_connection();
     }
-    //TODO
-}
-
-static zend_stat_t *
-php_nginx_sapi_get_stat(void) {
-    //TODO
-    return NULL;
-}
-
-static char *
-php_nginx_sapi_getenv(char *name, size_t name_len) {
-    //TODO
-    return NULL;
 }
 
 static int
 php_nginx_sapi_header_handler(sapi_header_struct *sapi_header, sapi_header_op_enum op, sapi_headers_struct *sapi_headers) {
-    //TODO
+    ngx_http_request_t *r;
+    ngx_table_elt_t *header;
+    char *pos;
+
+    if ((pos = ngx_strstr(sapi_header->header, ": ")) == NULL){
+        return NGX_ERROR;
+    }
+    r = ngx_php_request;
+    header = ngx_list_push(&r->headers_out.headers);
+    if (header == NULL){
+        return NGX_ERROR;
+    }
+
+    header->hash = 1;
+    header->key.len = pos - sapi_header->header;
+    header->key.data = ngx_pcalloc(r->pool, header->key.len);
+    ngx_cpystrn((u_char *)header->key.data, (u_char *) sapi_header->header, header->key.len + 1);
+
+    header->value.len = sapi_header->header_len - header->key.len - 2;
+    header->value.data = ngx_pcalloc(r->pool, header->value.len);
+    ngx_cpystrn((u_char *) header->value.data, (u_char *)(pos + 2), header->value.len + 1);
+
     return 0;
 }
 
@@ -91,10 +104,14 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
 static size_t
 php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
     printf("------------- SAPI_READ_POST ---------------\n");
-
     nginx_php_ctx_t *php_ctx;
     ngx_chain_t *head;
     size_t read_len = 0;
+    size_t remaining = SG(request_info).content_length - SG(read_post_bytes);
+
+    if (remaining < count_bytes) {
+        count_bytes = remaining;
+    }
 
     php_ctx = SG(server_context);
     if (php_ctx->r->request_body == NULL || php_ctx->r->request_body->bufs == NULL) {
@@ -102,45 +119,21 @@ php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
     }
 
     head = php_ctx->r->request_body->bufs;
-    while(head != NULL) {
-        memcpy(buffer + read_len, head->buf->pos, head->buf->last - head->buf->pos);
-        read_len += head->buf->last - head->buf->pos;
-        head = head->next;
+    while(read_len < count_bytes) {
+        memcpy(buffer+read_len, head->buf->pos + SG(read_post_bytes), count_bytes - read_len);
+        read_len += count_bytes - read_len;
     }
-    printf("------------- SAPI_POST: %s ---------------\n", buffer);
+
+    printf("------------- COUNT_BYTES: %zu ---------------\n", count_bytes);
+    printf("------------- BODY_DATA: %s ---------------\n", buffer);
+
     return read_len;
 }
 
 static char *
 php_nginx_sapi_read_cookies(void) {
     printf("------------- SAPI_READ_COOKIE ---------------\n");
-
-    nginx_php_ctx_t *ctx;
-    ngx_http_request_t *r;
-    ngx_list_part_t *part;
-    ngx_table_elt_t *header;
-    ngx_uint_t i;
-
-    ctx = SG(server_context);
-    r = ctx->r;
-    part = &r->headers_in.headers.part;
-    header = part->elts;
-
-    for (i = 0;; i++) {
-        if (i >= part->nelts) {
-            if (part->next == NULL) {
-                break;
-            }
-            part = part->next;
-            header = part->elts;
-            i = 0;
-        }
-        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *)"cookie", header[i].key.len) == 0) {
-            printf_ngx_str("-------COOKIE------", &header[i].value);
-            return nginx_str_to_char(r->pool, &header[i].value);
-        }
-    }
-    return NULL;
+    return SG(request_info).cookie_data;
 }
 
 char *
@@ -167,7 +160,6 @@ php_nginx_sapi_register_variables(zval *track_vars_array) {
 
     ngx_uint_t i;
     char *schema;
-    char *method;
 
     php_import_environment_variables(track_vars_array);
 
@@ -176,35 +168,6 @@ php_nginx_sapi_register_variables(zval *track_vars_array) {
     serve_conf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
     my_conf = ngx_http_get_module_loc_conf(r, ngx_http_php_module);
 
-    switch (r->method) {
-        case NGX_HTTP_GET:
-            method = (char *) "GET";
-            break;
-        case NGX_HTTP_POST:
-            method = (char *) "POST";
-            break;
-        case NGX_HTTP_HEAD:
-            method = (char *) "HEAD";
-            break;
-        case NGX_HTTP_PUT:
-            method = (char *) "PUT";
-            break;
-        case NGX_HTTP_DELETE:
-            method = (char *) "DELETE";
-            break;
-        case NGX_HTTP_OPTIONS:
-            method = (char *) "OPTIONS";
-            break;
-        case NGX_HTTP_PATCH:
-            method = (char *) "PATCH";
-            break;
-        case NGX_HTTP_TRACE:
-            method = (char *) "TRACE";
-            break;
-        default:
-            method = (char *) "";
-    }
-
     schema = "http";
 #if (NGX_HTTP_SSL)
     if (r->connection->ssl) {
@@ -212,19 +175,16 @@ php_nginx_sapi_register_variables(zval *track_vars_array) {
     }
 #endif
     php_register_variable("REQUEST_SCHEME", schema, track_vars_array);
-    php_register_variable("REQUEST_METHOD", method, track_vars_array);
-    if (r->args.len > 0) {
-        php_register_variable_safe("QUERY_STRING", (char *) r->args.data, r->args.len, track_vars_array);
-    } else {
-        php_register_variable_safe("QUERY_STRING", (char *) "", 0, track_vars_array);
-    }
+    php_register_variable("REQUEST_METHOD", (char *)SG(request_info).request_method, track_vars_array);
+    php_register_variable("QUERY_STRING", SG(request_info).query_string, track_vars_array);
+    php_register_variable("REQUEST_URI", SG(request_info).request_uri, track_vars_array);
+    php_register_variable("CONTENT_TYPE", (char *)SG(request_info).content_type, track_vars_array);
 
     php_register_variable_safe("PHP_SELF", (char *) ctx->script->uri.data, ctx->script->uri.len, track_vars_array);
     php_register_variable_safe("DOCUMENT_ROOT", (char *) ctx->script->dir.data, ctx->script->dir.len, track_vars_array);
     php_register_variable_safe("DOCUMENT_URI", (char *) ctx->script->uri.data, ctx->script->uri.len, track_vars_array);
     php_register_variable_safe("SCRIPT_FILENAME", (char *) my_conf->filename.data, my_conf->filename.len, track_vars_array);
     php_register_variable_safe("SCRIPT_NAME", (char *) ctx->script->uri.data, ctx->script->uri.len, track_vars_array);
-    php_register_variable_safe("REQUEST_URI", (char *) r->uri_start,strlen((char *) r->uri_start) - strlen((char *) r->uri_end), track_vars_array);
     php_register_variable_safe("REMOTE_ADDR", (char *) r->connection->addr_text.data, r->connection->addr_text.len, track_vars_array);
     php_register_variable("REMOTE_PORT", nginx_php_get_port(r->pool, (struct sockaddr_in *) r->connection->sockaddr), track_vars_array);
 
@@ -250,9 +210,6 @@ php_nginx_sapi_register_variables(zval *track_vars_array) {
             header = part->elts;
             i = 0;
         }
-        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-type", header[i].key.len) == 0) {
-            php_register_variable_safe((char *)"CONTENT_TYPE", (char *) header[i].value.data, header[i].value.len, track_vars_array);
-        }
         if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-length", header[i].key.len) == 0) {
             php_register_variable_safe((char *)"CONTENT_LENGTH", (char *) header[i].value.data, header[i].value.len, track_vars_array);
         }
@@ -265,7 +222,6 @@ php_nginx_sapi_log_message(char *msg, int syslog_type_int) {
     printf("------------- SAPI_LOG_MSG ---------------\n");
 
     fprintf(stderr, "%s\n", msg);
-    //TODO
 }
 
 sapi_module_struct nginx_sapi_module = {
@@ -280,8 +236,8 @@ sapi_module_struct nginx_sapi_module = {
 
         php_nginx_sapi_ub_write,        /* unbuffered write */
         php_nginx_sapi_flush,           /* flush */
-        php_nginx_sapi_get_stat,        /* get uid */
-        php_nginx_sapi_getenv,      /* getenv */
+        NULL,                           /* get uid */
+        NULL,                           /* getenv */
 
         php_error,                      /* error handler */
 
@@ -321,14 +277,8 @@ php_nginx_handler_startup(int argc, char **argv) {
 }
 
 int
-php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
-    printf("------------- SAPI_EXEC_SCRIPT ---------------\n");
-
-    if (php_request_startup() == FAILURE) {
-        return FAILURE;
-    }
+php_nginx_request_init(ngx_http_request_t *r, nginx_php_file_info *php_file) {
     nginx_php_ctx_t *ctx;
-    zend_file_handle script;
 
     ctx = SG(server_context);
     if (ctx == NULL) {
@@ -337,15 +287,94 @@ php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
         ctx->script = php_file;
         SG(server_context) = ctx;
     }
-    SG(request_info).path_translated = NULL;
-    SG(request_info).request_method = NULL;
-    SG(request_info).proto_num = 1000;
-    SG(request_info).query_string = NULL;
-    SG(request_info).request_uri = NULL;
-    SG(request_info).content_type = NULL;
-    SG(request_info).content_length = 0;
-    SG(sapi_headers).http_response_code = 200;
 
+    SG(request_info).content_type = "";
+    SG(request_info).path_translated = NULL;
+    SG(request_info).proto_num = 1000;
+    SG(sapi_headers).http_response_code = 200;
+    SG(request_info).content_length = 0;
+    SG(request_info).query_string = r->args.len > 0 ? nginx_str_to_char(r->pool, &r->args) : "";
+
+    char *method;
+    switch (r->method) {
+        case NGX_HTTP_GET:
+            method = (char *) "GET";
+            break;
+        case NGX_HTTP_POST:
+            method = (char *) "POST";
+            break;
+        case NGX_HTTP_HEAD:
+            method = (char *) "HEAD";
+            break;
+        case NGX_HTTP_PUT:
+            method = (char *) "PUT";
+            break;
+        case NGX_HTTP_DELETE:
+            method = (char *) "DELETE";
+            break;
+        case NGX_HTTP_OPTIONS:
+            method = (char *) "OPTIONS";
+            break;
+        case NGX_HTTP_PATCH:
+            method = (char *) "PATCH";
+            break;
+        case NGX_HTTP_TRACE:
+            method = (char *) "TRACE";
+            break;
+        default:
+            method = (char *) "";
+    }
+    SG(request_info).request_method = method;
+
+    ngx_uint_t uri_len = r->uri_end - r->uri_start + 1;
+    if (uri_len == 0) {
+        SG(request_info).request_uri = "";
+    } else {
+        char *uri = ngx_pcalloc(r->pool, uri_len);
+        ngx_cpystrn((u_char *)uri, r->uri_start, uri_len);
+        SG(request_info).request_uri = uri;
+    }
+
+    ngx_list_part_t *part;
+    ngx_table_elt_t *header;
+    part = &(r->headers_in.headers.part);
+    header = part->elts;
+    for (ngx_uint_t i = 0;; i++) {
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+            part = part->next;
+            header = part->elts;
+            i = 0;
+        }
+        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-type", header[i].key.len) == 0) {
+            SG(request_info).content_type = nginx_str_to_char(r->pool, &header[i].value);
+        }
+        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "content-length", header[i].key.len) == 0) {
+            SG(request_info).content_length = atoi(nginx_str_to_char(r->pool, &header[i].value));
+        }
+        if (ngx_strncasecmp(header[i].lowcase_key, (u_char *) "cookie", header[i].key.len) == 0) {
+            SG(request_info).cookie_data = nginx_str_to_char(r->pool, &header[i].value);
+        }
+    }
+
+    if (php_request_startup() == FAILURE) {
+        return FAILURE;
+    }
+
+    return SUCCESS;
+}
+
+int
+php_nginx_execute_script(ngx_http_request_t *r, nginx_php_file_info *php_file) {
+    printf("------------- SAPI_EXEC_SCRIPT ---------------\n");
+
+    if (php_nginx_request_init(r, php_file) == FAILURE) {
+        return FAILURE;
+    }
+
+    zend_file_handle script;
     script.type = ZEND_HANDLE_FP;
     script.filename = nginx_str_to_char(r->pool, &php_file->full);
     script.opened_path = NULL;

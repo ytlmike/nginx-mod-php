@@ -158,3 +158,12 @@ nginx_file_path_to_dir(ngx_pool_t *pool, ngx_str_t *filename) {
     return info;
 }
 
+//zend_file_handle *
+//make_zend_file_handler(ngx_pool_t *pool, ngx_str_t *filename) {
+//    zend_file_handle script;
+//    script.type = ZEND_HANDLE_FP;
+//    script.filename = nginx_str_to_char(pool, filename);
+//    script.opened_path = NULL;
+//    script.free_filename = 0;
+//
+//}
