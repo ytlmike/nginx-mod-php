@@ -1,6 +1,58 @@
 #include "ngx_handler.h"
 #include "helper.h"
 
+static int php_nginx_startup(sapi_module_struct *module);
+
+static int php_nginx_sapi_deactivate(void);
+
+static size_t php_nginx_sapi_ub_write(const char *str, size_t str_length);
+
+static void php_nginx_sapi_flush(void *server_context);
+
+static int php_nginx_sapi_header_handler(sapi_header_struct *sapi_header, sapi_header_op_enum op, sapi_headers_struct *sapi_headers);
+
+static int php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers);
+
+static size_t php_nginx_sapi_read_post(char *buffer, size_t count_bytes);
+
+static char * php_nginx_sapi_read_cookies(void) ;
+
+static void php_nginx_sapi_register_variables(zval *track_vars_array);
+
+static void php_nginx_sapi_log_message(char *msg, int syslog_type_int);
+
+sapi_module_struct nginx_sapi_module = {
+        "nginx_handler",                /* name */
+        "PHP Nginx Handler",            /* pretty name */
+
+        php_nginx_startup,              /* startup */
+        php_module_shutdown_wrapper,    /* shutdown */
+
+        NULL,                           /* activate */
+        php_nginx_sapi_deactivate,      /* deactivate */
+
+        php_nginx_sapi_ub_write,        /* unbuffered write */
+        php_nginx_sapi_flush,           /* flush */
+        NULL,                           /* get uid */
+        NULL,                           /* getenv */
+
+        php_error,                      /* error handler */
+
+        php_nginx_sapi_header_handler,  /* header handler */
+        php_nginx_sapi_send_headers,    /* send headers handler */
+        NULL,                           /* send header handler */
+
+        php_nginx_sapi_read_post,       /* read POST data */
+        php_nginx_sapi_read_cookies,    /* read Cookies */
+
+        php_nginx_sapi_register_variables,  /* register server variables */
+        php_nginx_sapi_log_message,         /* Log message */
+        NULL,    /* Get request time */
+        NULL,                                /* Child terminate */
+
+        STANDARD_SAPI_MODULE_PROPERTIES
+};
+
 static int
 php_nginx_startup(sapi_module_struct *module) {
 
@@ -103,10 +155,14 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
 
 static size_t
 php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
-    printf("------------- SAPI_READ_POST ---------------\n");
+    printf("------------- SAPI_READ_POST: %zu ---------------\n", count_bytes);
     nginx_php_ctx_t *php_ctx;
     ngx_chain_t *head;
-    size_t read_len = 0;
+    u_char *read_start_pos;
+    size_t buf_len; // current buffer length
+    size_t cpy_len; // length to copy
+    size_t read_len = 0; // bytes already read
+    size_t file_already_read_len;
     size_t remaining = SG(request_info).content_length - SG(read_post_bytes);
 
     if (remaining < count_bytes) {
@@ -119,13 +175,53 @@ php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
     }
 
     head = php_ctx->r->request_body->bufs;
+    buf_len = head->buf->last - head->buf->pos;
     while(read_len < count_bytes) {
-        memcpy(buffer+read_len, head->buf->pos + SG(read_post_bytes), count_bytes - read_len);
-        read_len += count_bytes - read_len;
+        cpy_len = count_bytes - read_len;
+        if (cpy_len + SG(read_post_bytes) > buf_len) {
+            if ((long int)buf_len <= SG(read_post_bytes)) {
+                break;
+            }
+            cpy_len = buf_len - SG(read_post_bytes);
+        }
+
+        read_start_pos = head->buf->pos + SG(read_post_bytes) + read_len;
+        memcpy(buffer+read_len, read_start_pos, cpy_len);
+        read_len += cpy_len;
     }
 
-    printf("------------- COUNT_BYTES: %zu ---------------\n", count_bytes);
-    printf("------------- BODY_DATA: %s ---------------\n", buffer);
+    if (php_ctx->r->request_body->temp_file != NULL) {
+        ngx_file_t       *tmp_file;
+        ngx_fd_t          fd;
+        ngx_file_info_t   fi;
+        tmp_file = &php_ctx->r->request_body->temp_file->file;
+        fd = ngx_open_file(tmp_file->name.data, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0);
+        if (fd == NGX_INVALID_FILE) {
+            fprintf(stderr, "Unable to open body tmp file: %s\n", tmp_file->name.data);
+            return read_len;
+        }
+
+        if (ngx_fd_info(fd, &fi) == NGX_FILE_ERROR) {
+            fprintf(stderr, "Unable to get tmp file info: %s\n", tmp_file->name.data);
+            ngx_close_file(fd);
+            return read_len;
+        }
+
+        cpy_len = count_bytes - read_len;
+        file_already_read_len = SG(read_post_bytes) + read_len - buf_len;
+        if ((long int)file_already_read_len < fi.st_size) {
+            if (fi.st_size - file_already_read_len < cpy_len) {
+                cpy_len = fi.st_size - file_already_read_len;
+            }
+            ngx_read_file(tmp_file, (u_char *)buffer+read_len, cpy_len, (off_t)file_already_read_len);
+            read_len += cpy_len;
+        }
+        ngx_close_file(fd);
+    }
+
+    printf("+++++++++++++++++++++ BODY_DATA_START +++++++++++++++++++++\n");
+    printf("%s\n", buffer);
+    printf("+++++++++++++++++++++ READ_LEN: %zu +++++++++++++++++++++\n", read_len);
 
     return read_len;
 }
@@ -223,38 +319,6 @@ php_nginx_sapi_log_message(char *msg, int syslog_type_int) {
 
     fprintf(stderr, "%s\n", msg);
 }
-
-sapi_module_struct nginx_sapi_module = {
-        "nginx_handler",                /* name */
-        "PHP Nginx Handler",            /* pretty name */
-
-        php_nginx_startup,              /* startup */
-        php_module_shutdown_wrapper,    /* shutdown */
-
-        NULL,                           /* activate */
-        php_nginx_sapi_deactivate,      /* deactivate */
-
-        php_nginx_sapi_ub_write,        /* unbuffered write */
-        php_nginx_sapi_flush,           /* flush */
-        NULL,                           /* get uid */
-        NULL,                           /* getenv */
-
-        php_error,                      /* error handler */
-
-        php_nginx_sapi_header_handler,  /* header handler */
-        php_nginx_sapi_send_headers,    /* send headers handler */
-        NULL,                           /* send header handler */
-
-        php_nginx_sapi_read_post,       /* read POST data */
-        php_nginx_sapi_read_cookies,    /* read Cookies */
-
-        php_nginx_sapi_register_variables,  /* register server variables */
-        php_nginx_sapi_log_message,         /* Log message */
-        NULL,    /* Get request time */
-        NULL,                                /* Child terminate */
-
-        STANDARD_SAPI_MODULE_PROPERTIES
-};
 
 int
 php_nginx_handler_startup(int argc, char **argv) {

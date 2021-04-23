@@ -17,5 +17,6 @@ typedef struct ngx_http_php_ctx_s {
     ngx_chain_t *out_head;
     ngx_chain_t **out_tail;
     nginx_php_file_info *php_file;
+    ngx_fd_t *body_tmp_fd;
 } ngx_http_php_ctx_t;
 #endif
