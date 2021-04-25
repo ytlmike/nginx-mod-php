@@ -10,4 +10,4 @@ NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_http_php_module.h \
 
 CORE_INCS="$CORE_INCS $PHP_INC $PHP_INC/main $PHP_INC/TSRM $PHP_INC/Zend $PHP_INC/sapi/embed"
 
-CORE_LIBS="$CORE_LIBS -lstdc++ -L$PHP_LIB -lphp7"
+CORE_LIBS="$CORE_LIBS -lstdc++ -lphp7"

@@ -1,7 +1,6 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <php_embed.h>
 #include "sapi/helper.h"
 
 extern ngx_http_request_t *ngx_php_request;

@@ -9,7 +9,7 @@ linux only yet.
     - install php
     - exec:
     ```shell
-    cp path_to_php/lib/libphp7.so lib/php
+    cp path_to_php/lib/libphp7.so /lib
     export PHP_INC=path_to_php/include
     ```
     
@@ -32,5 +32,5 @@ location /demo {
 ```
 
 ## Opcache
-the opcache extension is not support embed sapi by default, to enable it, you should change your php source code and rebuild php.
+the opcache extension doesn't support nginx_handler sapi by default, to enable it, you should change your php source code and rebuild php.
 the code is in `php-src/ext/opcache/ZendAccelerator.c`, find `accel_find_sapi` function and add `nginx_handler` to `supported_sapis[]`
