@@ -2,7 +2,6 @@
 #include "sapi/ngx_handler.h"
 
 ngx_http_request_t *ngx_php_request;
-nginx_php_script_t *php_file;
 
 static void * ngx_http_php_create_loc_conf(ngx_conf_t *cf);
 
@@ -98,7 +97,6 @@ static char *
 ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     printf("--------- READ_CONF ---------\n");
 
-    ngx_http_php_loc_conf_t *php_conf;
     ngx_http_core_loc_conf_t *loc_conf;
 
     if (php_nginx_handler_startup() == FAILURE) {
@@ -108,32 +106,33 @@ ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     loc_conf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     loc_conf->handler = ngx_http_php_handler;
 
-    char *rv = ngx_conf_set_str_slot(cf, cmd, conf);
-    php_conf = conf;
-    if (php_conf->filename.len == 0) {
-        ngx_log_error(NGX_LOG_ERR, cf->log, 0, "empty php script file");
-        return NGX_CONF_ERROR;
-    }
-
-    php_file = nginx_file_path_to_dir(cf->pool, &php_conf->filename);
-    if (php_file == NULL) {
-        ngx_log_error(NGX_LOG_ERR, cf->log, 0, "alloc php_file failed");
-        return NGX_CONF_ERROR;
-    }
-
-    return rv;
+    return ngx_conf_set_str_slot(cf, cmd, conf);
 }
 
 ngx_int_t
 ngx_http_php_init_ctx(ngx_http_request_t *r) {
     ngx_http_php_ctx_t *ctx;
+    ngx_http_php_loc_conf_t *conf;
+    nginx_php_script_t *php_script;
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_php_module);
+    if (conf->filename.len == 0) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "empty php script file");
+        return NGX_ERROR;
+    }
+    php_script = nginx_file_path_to_dir(r->pool, &conf->filename);
+    if (php_script == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "alloc php_script failed");
+        return NGX_ERROR;
+    }
+
     ctx = ngx_http_get_module_ctx(r, ngx_http_php_module);
     ctx = ngx_pcalloc(r->pool, sizeof(*ctx));
     if (ctx == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "cannot alloc ctx");
         return NGX_ERROR;
     }
-    ctx->php_file = php_file;
+    ctx->php_file = php_script;
     ngx_http_set_ctx(r, ctx, ngx_http_php_module);
 
     return NGX_OK;
@@ -176,7 +175,12 @@ ngx_http_php_run(ngx_http_request_t *r) {
     ngx_int_t rc;
     ngx_http_php_ctx_t *ctx;
 
-    php_nginx_execute_script(r, php_file);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_php_module);
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    php_nginx_execute_script(r, ctx->php_file);
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_php_module);
     if (ctx == NULL) {
