@@ -3,6 +3,8 @@
 
 ngx_http_request_t *ngx_php_request;
 
+int php_inited = 0;
+
 static void * ngx_http_php_create_loc_conf(ngx_conf_t *cf);
 
 static char * ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -99,8 +101,11 @@ ngx_http_php_handle_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
 
     ngx_http_core_loc_conf_t *loc_conf;
 
-    if (php_nginx_handler_startup() == FAILURE) {
-        return NGX_CONF_ERROR;
+    if (php_inited == 0) {
+        if (php_nginx_handler_startup() == FAILURE) {
+            return NGX_CONF_ERROR;
+        }
+        php_inited = 1;
     }
 
     loc_conf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);

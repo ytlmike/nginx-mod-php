@@ -120,10 +120,12 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
 
     h = (sapi_header_struct*)zend_llist_get_first_ex(&sapi_headers->headers, &pos);
     while (h) {
-        if ((content_pos = ngx_strstr(h->header, ": ")) == NULL){
+        fprintf(stderr,"------------- SAPI_ADD_HEADER： %s ---------------\n", h->header);
+        if ((content_pos = ngx_strstr(h->header, ":")) == NULL){
+            h = (sapi_header_struct*)zend_llist_get_next_ex(&sapi_headers->headers, &pos);
             continue;
         }
-        if (ngx_strncasecmp((u_char *)h->header, (u_char *)"Date: ", strlen("Date: ")) == 0) {
+        if (ngx_strncasecmp((u_char *)h->header, (u_char *)"Date:", strlen("Date:")) == 0) {
             h = (sapi_header_struct*)zend_llist_get_next_ex(&sapi_headers->headers, &pos);
             continue;
         }
@@ -136,9 +138,9 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
         header->key.data = ngx_pcalloc(r->pool, header->key.len);
         ngx_cpystrn((u_char *)header->key.data, (u_char *)h->header, header->key.len + 1);
 
-        header->value.len = h->header_len - header->key.len - 2;
+        header->value.len = h->header_len - header->key.len - 1;
         header->value.data = ngx_pcalloc(r->pool, header->value.len);
-        ngx_cpystrn((u_char *) header->value.data, (u_char *)(content_pos + 2), header->value.len + 1);
+        ngx_cpystrn((u_char *) header->value.data, (u_char *)(content_pos + 1), header->value.len + 1);
 
         if (ngx_strncasecmp(header->key.data, (u_char *)"Content-Type", header->key.len) == 0) {
             ctx->has_content_type = 1;
@@ -152,6 +154,8 @@ php_nginx_sapi_send_headers(sapi_headers_struct *sapi_headers) {
 
 static size_t
 php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
+    fprintf(stderr,"------------- SAPI_READ_POST ---------------\n");
+
     ngx_http_request_t *r;
     ngx_http_php_ctx_t *ctx;
     ngx_chain_t *head;
@@ -204,6 +208,7 @@ php_nginx_sapi_read_post(char *buffer, size_t count_bytes) {
             read_len += cpy_len;
         }
     }
+    fprintf(stderr,"------------- SAPI_READ_POST_LEN: %ld ---------------\n", read_len);
 
     return read_len;
 }
@@ -318,6 +323,9 @@ php_nginx_handler_startup() {
 
 int
 php_nginx_request_init(ngx_http_request_t *r) {
+    SG(server_context) = NULL;
+    SG(server_context) = ngx_pcalloc(r->pool, 1);
+
     SG(request_info).content_type = "";
     SG(request_info).path_translated = NULL;
     SG(request_info).proto_num = 1000;
